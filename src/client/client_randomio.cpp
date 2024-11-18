@@ -22,16 +22,6 @@ public:
     return gameState;
   }
 
-  bool connect(const std::string& name) {
-    // Attempt connection
-    bool connectionFails = false; // Replace with actual connection logic
-    if (connectionFails) {
-      spdlog::error("Failed to connect as {}", name);
-      return false;
-    }
-    return true;
-  }
-
   bool isActive() const {
     // Return true if the connection is active; otherwise, false
     return connectionState == ConnectionState::Active;
@@ -69,44 +59,52 @@ class BotClient {
   int inertia = 30;
 
   void onGameStateReceived(sf::Packet& packet) { // Remove const from packet
-    // Extract player positions from the packet and update the game state
-    std::map<Id, std::tuple<int, int>> newPositions;
-    // Assuming the packet structure is known and you can extract the positions
-    // Example extraction logic:
-    sf::Uint32 numPlayers;
-    packet >> numPlayers;
-    for (sf::Uint32 i = 0; i < numPlayers; ++i) {
-      int x, y, r, g, b;
-      std::string playerName;
-      Id id;
-      packet >> x >> y >> r >> g >> b >> playerName >> id;
-      newPositions[id] = std::make_tuple(x, y);
+    try {
+      // Extract player positions from the packet and update the game state
+      std::map<Id, std::tuple<int, int>> newPositions;
+      // Assuming the packet structure is known and you can extract the positions
+      sf::Uint32 numPlayers;
+      packet >> numPlayers;
+      for (sf::Uint32 i = 0; i < numPlayers; ++i) {
+        int x, y, r, g, b;
+        std::string playerName;
+        Id id;
+        packet >> x >> y >> r >> g >> b >> playerName >> id;
+        newPositions[id] = std::make_tuple(x, y);
+      }
+      state.updatePlayerPositions(newPositions);
+    } catch (const std::exception &e) {
+      spdlog::error("Error while receiving game state: {}", e.what());
     }
-    state.updatePlayerPositions(newPositions);
   }
 
   bool is_valid_move(Direction direction) {
-    auto new_pos = my_player.position + getDirectionVector(direction);
+    try {
+      auto new_pos = my_player.position + getDirectionVector(direction);
 
-    // Check if the new position is inside the grid
-    if (!state.isInsideGrid(new_pos)) {
-      return false;
-    }
-
-    // Check if the new position collides with any player position
-    auto playerPositions = state.getPlayerPositions();
-    for (const auto& pos : playerPositions) {
-      if (new_pos == pos) {
-        return false; // Collision detected
+      // Check if the new position is inside the grid
+      if (!state.isInsideGrid(new_pos)) {
+        return false;
       }
-    }
 
-    // Check if the new position is empty
-    if (!state.isCellEmpty(new_pos)) {
+      // Check if the new position collides with any player position
+      auto playerPositions = state.getPlayerPositions();
+      for (const auto& pos : playerPositions) {
+        if (new_pos == pos) {
+          return false; // Collision detected
+        }
+      }
+
+      // Check if the new position is empty
+      if (!state.isCellEmpty(new_pos)) {
+        return false;
+      }
+
+      return true;
+    } catch (const std::exception &e) {
+      spdlog::error("Error while validating move: {}", e.what());
       return false;
     }
-
-    return true;
   }
 
   Direction decideMove() {
@@ -124,7 +122,7 @@ class BotClient {
       if (attempts >= max_attempts) {
         spdlog::error("{}: Failed to find a valid move after {} attempts", name,
                       max_attempts);
-        exit(1);
+        throw std::runtime_error("Failed to find a valid move after max attempts");
       }
       // Simple random movement
       int proposal = dist(rng);
@@ -145,39 +143,55 @@ class BotClient {
   }
 
   void receiveGameState() {
-    state = connection.receiveGameState();
-    for (const auto &player : state.players) {
-      if (player.name == name) {
-        my_player = player;
-        break;
+    try {
+      state = connection.receiveGameState();
+      for (const auto &player : state.players) {
+        if (player.name == name) {
+          my_player = player;
+          break;
+        }
       }
+    } catch (const std::exception &e) {
+      spdlog::error("Error while receiving game state: {}", e.what());
     }
   }
 
   void sendMove() {
-    spdlog::debug("{}: Sending move", name);
-    auto move = decideMove();
-    previousDirection = getDirectionValue(move);
-    connection.sendMove(move);
+    try {
+      spdlog::debug("{}: Sending move", name);
+      auto move = decideMove();
+      previousDirection = getDirectionValue(move);
+      connection.sendMove(move);
+    } catch (const std::exception &e) {
+      spdlog::error("Error while sending move: {}", e.what());
+    }
   }
 
 public:
   BotClient(const std::string &botName) : name(botName) {
-    std::random_device rd;
-    rng.seed(rd());
-    std::uniform_int_distribution<int> dist(0, 50);
-    inertia = dist(rng);
-    connection.connect(name);
-    if (!connection.isActive()) {
-      spdlog::critical("{}: Connection failed", name);
+    try {
+      std::random_device rd;
+      rng.seed(rd());
+      std::uniform_int_distribution<int> dist(0, 50);
+      inertia = dist(rng);
+      if (!connection.isActive()) {
+        spdlog::critical("{}: Connection is not active", name);
+        throw std::runtime_error("Failed to establish an active connection");
+      }
+    } catch (const std::exception &e) {
+      spdlog::critical("Error during BotClient initialization: {}", e.what());
       exit(1);
     }
   }
 
   void run() {
     while (connection.isActive()) {
-      receiveGameState();
-      sendMove();
+      try {
+        receiveGameState();
+        sendMove();
+      } catch (const std::exception &e) {
+        spdlog::error("Error during run loop: {}", e.what());
+      }
     }
   }
 };
@@ -190,8 +204,13 @@ int main(int argc, char *argv[]) {
 #if SPDLOG_ACTIVE_LEVEL == SPDLOG_LEVEL_TRACE
   spdlog::set_level(spdlog::level::debug);
 #endif
-  std::string botName = argv[1];
-  BotClient bot(botName);
-  bot.run();
+  try {
+    std::string botName = argv[1];
+    BotClient bot(botName);
+    bot.run();
+  } catch (const std::exception &e) {
+    spdlog::critical("Unhandled exception in main: {}", e.what());
+    return 1;
+  }
   return 0;
 }
