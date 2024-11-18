@@ -27,6 +27,8 @@ class Connection;
  * @brief A representation of the state of the game
  */
 struct GameState {
+  // Existing members...
+
   /**
    * @brief The grid of the game
    *
@@ -81,11 +83,37 @@ struct GameState {
            position.y < gridHeight;
   }
 
+  /**
+   * @brief Get the positions of all players
+   *
+   * @return std::vector<sf::Vector2i> A vector containing the positions of all players
+   */
+  std::vector<sf::Vector2i> getPlayerPositions() const {
+    std::vector<sf::Vector2i> positions;
+    for (const auto& player : players) {
+      positions.push_back(player.position);
+    }
+    return positions;
+  }
+
+  /**
+   * @brief Update the positions of players
+   *
+   * @param newPositions A map containing the new positions of players
+   */
+  void updatePlayerPositions(const std::map<Id, std::tuple<int, int>>& newPositions) {
+    for (auto& player : players) {
+      auto it = newPositions.find(player.id);
+      if (it != newPositions.end()) {
+        player.position = sf::Vector2i(std::get<0>(it->second), std::get<1>(it->second));
+      }
+    }
+  }
+
 private:
   friend Connection;
   GameState(sf::Packet &packet);
 };
-
 /**
  * @brief A connection to the server. Allows to receive the game state and send
  * the player's moves.
